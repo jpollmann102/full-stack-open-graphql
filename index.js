@@ -106,6 +106,19 @@ const typeDefs = gql`
     allBooks(author: String, genre: String): [Book!]!
     allAuthors: [Author!]!
   }
+
+  type Mutation {
+    addBook(
+      title: String!
+      author: String!
+      published: Int!
+      genres: [String]!
+    ): Book
+    addAuthor(
+      name: String!
+      born: Int
+    ): Author
+  }
 `
 
 const resolvers = {
@@ -116,7 +129,7 @@ const resolvers = {
       if(!args.author && !args.genre) return books;
 
       let response = books;
-      
+
       if(args.author) response = response.filter(b => b.author === args.author);
 
       if(args.genre) response = response.filter(b => b.genres.includes(args.genre));
@@ -127,6 +140,30 @@ const resolvers = {
   },
   Author: {
     bookCount: (root) => books.filter(b => b.author === root.name).length
+  },
+  Mutation: {
+    addBook: (root, args) => {
+      const book = {...args, id: uuid() };
+
+      let author = authors.find(a => a.name === args.author);
+      if(!author)
+      {
+        author = {
+          name: args.author,
+          born: null,
+          id: uuid()
+        };
+        authors = authors.concat(author);
+      }
+
+      books = books.concat(books);
+      return book;
+    },
+    addAuthor: (root, args) => {
+      const author = {...args, id: uuid() };
+      authors = authors.concat(author);
+      return author;
+    }
   }
 }
 
