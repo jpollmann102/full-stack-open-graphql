@@ -1,2 +1,4 @@
 coursework.js
 /node_modules
+/react-graphql
+.env

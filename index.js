@@ -1,88 +1,17 @@
-const { ApolloServer, gql } = require('apollo-server')
-const { v1: uuid } = require('uuid');
+const { ApolloServer, UserInputError, gql } = require('apollo-server')
+const mongoose = require('mongoose');
+const Author = require('./models/author');
+const Book = require('./models/book');
+require('dotenv').config();
 
-let authors = [
-  {
-    name: 'Robert Martin',
-    id: "afa51ab0-344d-11e9-a414-719c6709cf3e",
-    born: 1952,
-  },
-  {
-    name: 'Martin Fowler',
-    id: "afa5b6f0-344d-11e9-a414-719c6709cf3e",
-    born: 1963
-  },
-  {
-    name: 'Fyodor Dostoevsky',
-    id: "afa5b6f1-344d-11e9-a414-719c6709cf3e",
-    born: 1821
-  },
-  {
-    name: 'Joshua Kerievsky', // birthyear not known
-    id: "afa5b6f2-344d-11e9-a414-719c6709cf3e",
-  },
-  {
-    name: 'Sandi Metz', // birthyear not known
-    id: "afa5b6f3-344d-11e9-a414-719c6709cf3e",
-  },
-]
-
-/*
- * Saattaisi olla järkevämpää assosioida kirja ja sen tekijä tallettamalla kirjan yhteyteen tekijän nimen sijaan tekijän id
- * Yksinkertaisuuden vuoksi tallennamme kuitenkin kirjan yhteyteen tekijän nimen
-*/
-
-let books = [
-  {
-    title: 'Clean Code',
-    published: 2008,
-    author: 'Robert Martin',
-    id: "afa5b6f4-344d-11e9-a414-719c6709cf3e",
-    genres: ['refactoring']
-  },
-  {
-    title: 'Agile software development',
-    published: 2002,
-    author: 'Robert Martin',
-    id: "afa5b6f5-344d-11e9-a414-719c6709cf3e",
-    genres: ['agile', 'patterns', 'design']
-  },
-  {
-    title: 'Refactoring, edition 2',
-    published: 2018,
-    author: 'Martin Fowler',
-    id: "afa5de00-344d-11e9-a414-719c6709cf3e",
-    genres: ['refactoring']
-  },
-  {
-    title: 'Refactoring to patterns',
-    published: 2008,
-    author: 'Joshua Kerievsky',
-    id: "afa5de01-344d-11e9-a414-719c6709cf3e",
-    genres: ['refactoring', 'patterns']
-  },
-  {
-    title: 'Practical Object-Oriented Design, An Agile Primer Using Ruby',
-    published: 2012,
-    author: 'Sandi Metz',
-    id: "afa5de02-344d-11e9-a414-719c6709cf3e",
-    genres: ['refactoring', 'design']
-  },
-  {
-    title: 'Crime and punishment',
-    published: 1866,
-    author: 'Fyodor Dostoevsky',
-    id: "afa5de03-344d-11e9-a414-719c6709cf3e",
-    genres: ['classic', 'crime']
-  },
-  {
-    title: 'The Demon ',
-    published: 1872,
-    author: 'Fyodor Dostoevsky',
-    id: "afa5de04-344d-11e9-a414-719c6709cf3e",
-    genres: ['classic', 'revolution']
-  },
-]
+const MONGO_DB_URL = process.env.DEV_MONGO_DB_URL;
+mongoose.connect(MONGO_DB_URL, { useNewUrlParser: true, useUnifiedTopology: true, useFindAndModify: false, useCreateIndex: true })
+  .then(() => {
+    console.log('connected to MongoDB');
+  })
+  .catch((error) => {
+    console.log('error connecting to MongoDB', error.message);
+  });
 
 const typeDefs = gql`
   type Author {
@@ -95,7 +24,7 @@ const typeDefs = gql`
   type Book {
     title: String!
     published: Int!
-    author: String!
+    author: Author!
     genres: [String!]
     id: ID!
   }
@@ -127,57 +56,126 @@ const typeDefs = gql`
 
 const resolvers = {
   Query: {
-    bookCount: () => books.length,
-    authorCount: () => authors.length,
+    bookCount: () => Book.collection.countDocuments(),
+    authorCount: () => Author.collection.countDocuments(),
+    allAuthors: () => Author.find({}),
     allBooks: (root, args) => {
-      if(!args.author && !args.genre) return books;
+      if(!args.author && !args.genre) return Book.find({});
 
-      let response = books;
+      let params = {};
 
-      if(args.author) response = response.filter(b => b.author === args.author);
+      if(args.author) params.author = args.author;
 
-      if(args.genre) response = response.filter(b => b.genres.includes(args.genre));
+      if(args.genre) params.genre = args.genre;
 
-      return response;
+      return Book.find(params).populate('author', );
     },
-    allAuthors: () => authors
   },
   Author: {
-    bookCount: (root) => books.filter(b => b.author === root.name).length
+    bookCount: async (root) => {
+      const books = await Book.find({ author: root.id });
+      return books.length;
+    }
+  },
+  Book: {
+    author: async (root) => {
+      const author = await Author.findById(root.author);
+      return {
+        name: author.name,
+        born: author.born,
+        bookCount: root.bookCount,
+        id: root.author,
+      }
+    }
   },
   Mutation: {
-    addBook: (root, args) => {
-      const book = {...args, id: uuid() };
+    addBook: async (root, args) => {
 
-      let author = authors.find(a => a.name === args.author);
-      if(!author)
+      if(!args.title || args.title.length < 2)
       {
-        author = {
-          name: args.author,
-          born: null,
-          id: uuid()
-        };
-        authors = authors.concat(author);
+        throw new UserInputError('book title too short, must be at least 2', {
+          invalidArgs: args
+        });
       }
 
-      books = books.concat(books);
+      if(!args.name || args.name.length < 4)
+      {
+        throw new UserInputError('author name too short, must be at least 4', {
+          invalidArgs: args
+        });
+      }
+
+      const author = await Author.findOne({ name: args.author });
+
+      let authorId;
+      if(!author)
+      {
+        const newAuthor = new Author({
+          name: args.author
+        });
+        const response = await newAuthor.save();
+        authorId = response._id;
+      }else authorId = author._id;
+
+      const newBook = {
+        title: args.title,
+        author: authorId,
+        published: args.published,
+        genres: args.genres
+      };
+      const book = new Book(newBook);
+
+      try{
+        await book.save();
+      }catch(error) {
+        throw new UserInputError(error.message, {
+          invalidArgs: args
+        });
+      }
+
       return book;
     },
-    addAuthor: (root, args) => {
-      const author = {...args, id: uuid() };
-      authors = authors.concat(author);
+    addAuthor: async (root, args) => {
+
+      if(!args.name || args.name.length < 4)
+      {
+        throw new UserInputError('author name too short, must be at least 4', {
+          invalidArgs: args
+        });
+      }
+
+      const author = new Author({...args});
+
+      try{
+        await author.save();
+      }catch(error) {
+        throw new UserInputError(error.message, {
+          invalidArgs: args
+        });
+      }
+
       return author;
     },
-    editAuthor: (root, args) => {
-      const author = authors.find(a => a.name === args.name);
+    editAuthor: async (root, args) => {
+      const author = await Author.findOne({ name: args.name });
+
       if(!author) return null;
 
       const newAuthor = {
         name: args.name,
         born: args.setBornTo
       };
-      authors = authors.map(a => a.name === args.name ? newAuthor : a);
-      return newAuthor;
+
+      try {
+        const response = await Author.findByIdAndUpdate(author._id, newAuthor, { new: true });
+
+        return response;
+
+      }catch(error) {
+        throw new UserInputError(error.message, {
+          invalidArgs: args
+        });
+      }
     }
   }
 }
@@ -185,8 +183,8 @@ const resolvers = {
 const server = new ApolloServer({
   typeDefs,
   resolvers,
-})
+});
 
 server.listen().then(({ url }) => {
   console.log(`Server ready at ${url}`)
-})
+});
