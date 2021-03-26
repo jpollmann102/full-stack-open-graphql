@@ -91,9 +91,12 @@ const resolvers = {
 
       if(args.author) params.author = args.author;
 
-      if(args.genre) params.genre = args.genre;
+      if(args.genre) params.genres = { $all: [args.genre] };
 
-      return Book.find(params).populate('author', );
+      console.log(params);
+
+      return Book.find(params)
+                 .populate('author', { name: 1, born: 1 });
     },
     me: (root, args, context) => {
       return context.currentUser;
